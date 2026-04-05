@@ -54,7 +54,7 @@ from ortools.sat.python import cp_model
 # CONFIG
 # ═══════════════════════════════════════════════════════════════════
 
-INPUT_FILE  = "Deliver-Optimization Model_v1_20032026\Cleaned_Seat Allocation Survey data_11-03-26_Unit Movable.xlsx"
+INPUT_FILE  = "Cleaned_Seat Allocation Survey data_11-03-26.xlsx"
 OUTPUT_FILE = "optimized_seat_allocation_v81.xlsx"
 
 GR_W_NO_MOVE    = 8000
@@ -1171,7 +1171,7 @@ if CP_TIME_LIMIT_SEC > 0:
             + [W_LARGE_FLOOR_EVAC*v            for v in large_floor_residual.values()]
             ) - sum(floor_reward)
         #
-        ))
+        )
         
     # FLOOR REWARD TERMS
     floor_reward = []
@@ -1180,11 +1180,35 @@ if CP_TIME_LIMIT_SEC > 0:
             floor_reward.append(var * 2_000_000)
         else:
             floor_reward.append(var * 1_000_000)
-
-    print(f"Phase 2: soft penalties ({_PHASE2_TIME}s) ...")
+    if min_floors is not None and _PHASE2_TIME > 0:
+        model.Add(sum(floor_used[f] for f in floors) <= min_floors)
+        
+        # FLOOR REWARD TERMS - must be defined BEFORE model.Minimize()
+        floor_reward = []
+        for (b, f), var in floor_empty_vars.items():
+            if (b, f) in design_floors:
+                floor_reward.append(var * 2_000_000)
+            else:
+                floor_reward.append(var * 1_000_000)
+        
+        def _tsw(t):
+            ts = team_size.get(t, 0)
+            return (int(W_TEAM_FLOOR_SPREAD * (ts ** 0.7))
+                    if W_TEAM_FLOOR_SPREAD_SCALE and ts > 1 else W_TEAM_FLOOR_SPREAD)
+        
+        model.Minimize(sum(
+            [W_MGR_PROX * mgr_diff[i] for i in mgr_diff]
+            + [W_MOVE * move[e] for e in emp_ids]
+            + [W_THIN * v for v in thin_vars]
+            + [W_C8_FLOOR * group_floor_extra[g] for g in group_floor_extra]
+            + [_tsw(t) * team_floor_extra[t] for t in team_floor_extra]
+            + [W_LARGE_FLOOR_EVAC * v for v in large_floor_residual.values()]
+        ) - sum(floor_reward))
+        
+        print(f"Phase 2: soft penalties ({_PHASE2_TIME}s) ...")
         solver2 = cp_model.CpSolver()
         solver2.parameters.max_time_in_seconds = _PHASE2_TIME
-        solver2.parameters.num_search_workers  = CP_WORKERS
+        solver2.parameters.num_search_workers = CP_WORKERS
         solver2.parameters.log_search_progress = True
         p2_status = solver2.Solve(model)
         final_solver, final_status = solver2, p2_status
@@ -1192,17 +1216,17 @@ if CP_TIME_LIMIT_SEC > 0:
         final_solver, final_status = solver, p1_status
 
     if final_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        lbl = "OPTIMAL" if final_status==cp_model.OPTIMAL else "FEASIBLE (time-limited)"
+        lbl = "OPTIMAL" if final_status == cp_model.OPTIMAL else "FEASIBLE (time-limited)"
         print(f"  CP-SAT: {lbl}  Obj={final_solver.ObjectiveValue():.0f}")
         cp_assignment = {}
         for e in emp_ids:
             for ri in emp_valid[e]:
-                if (e,ri) in x and final_solver.Value(x[e,ri]) == 1:
-                    cp_assignment[e] = ri; break
+                if (e, ri) in x and final_solver.Value(x[e, ri]) == 1:
+                    cp_assignment[e] = ri
+                    break
     else:
         print("  CP-SAT INFEASIBLE -- using greedy.")
-else:
-    print("CP-SAT skipped.")
+
 
 
 # ───────────────────────────────────────────────────────────────────
